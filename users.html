@@ -1,0 +1,109 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Chatverse — Users</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="navbar card">
+      <div class="brand"><div class="logo">CV</div><div><div style="font-weight:700">Chatverse</div><div class="small">Users</div></div></div>
+      <div class="navlinks">
+        <a href="home.html">Home</a>
+        <a href="chat.html">Chat</a>
+        <a href="users.html" class="active">Users</a>
+        <a href="profile.html">Profile</a>
+        <a id="logoutBtn" style="cursor:pointer" class="small">Logout</a>
+      </div>
+    </div>
+
+    <div style="margin-top:18px" class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div style="display:flex;gap:8px">
+          <button id="allBtn" class="btn ghost">All</button>
+          <button id="onlineBtn" class="btn ghost">Online</button>
+          <button id="offlineBtn" class="btn ghost">Offline</button>
+        </div>
+        <input id="search" class="input" placeholder="Search users..." style="width:240px" />
+      </div>
+
+      <div id="list" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+  </div>
+
+<script type="module">
+import { db, onAuthStateChanged, collection, onSnapshot } from './firebase.js';
+
+let me = null;
+onAuthStateChanged(async user => {
+  if (!user) return window.location.href = 'login.html';
+  me = user;
+  loadUsers();
+});
+
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  await (await import('./firebase.js')).signOutUser();
+  window.location.href = 'login.html';
+});
+
+let usersCache = [];
+function renderList(filter = 'all', q = '') {
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+  const filtered = usersCache.filter(u => {
+    if (q && !(`${u.fullName} ${u.username}`.toLowerCase().includes(q.toLowerCase()))) return false;
+    if (filter === 'online') return u.presence && u.presence.state === 'online';
+    if (filter === 'offline') return !u.presence || u.presence.state !== 'online';
+    return true;
+  });
+  for (const u of filtered) {
+    const el = document.createElement('div');
+    el.className = 'user-item';
+    el.innerHTML = `<div style="display:flex;align-items:center;gap:12px">
+      <div style="width:44px;height:44px;border-radius:8px;background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;font-weight:600">${(u.firstName||'?')[0]}</div>
+      <div>
+        <div style="font-weight:600">${u.fullName}</div>
+        <div class="small">@${u.username}</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center">
+      <div class="badge ${u.presence && u.presence.state === 'online' ? 'online' : 'offline'}"></div>
+      <div class="small">${u.presence && u.presence.state === 'online' ? 'Online' : 'Offline'}</div>
+    </div>`;
+    list.appendChild(el);
+  }
+}
+
+async function loadUsers() {
+  const usersRef = collection(db, "users");
+  onSnapshot(usersRef, snapshot => {
+    usersCache = [];
+    snapshot.forEach(doc => {
+      usersCache.push({ uid: doc.id, ...doc.data(), presence: null });
+    });
+    // get presence individually via Realtime DB (fastest is to listen to status/* but here keep simple)
+    // to keep it realtime, use onPresenceChange from firebase module
+    import('./firebase.js').then(m => {
+      usersCache.forEach(u => {
+        m.onPresenceChange(u.uid, state => {
+          u.presence = state;
+          renderList(currentFilter, document.getElementById('search').value);
+        });
+      });
+    });
+    renderList(currentFilter, document.getElementById('search').value);
+  });
+}
+
+let currentFilter = 'all';
+document.getElementById('allBtn').onclick = () => { currentFilter = 'all'; renderList('all', document.getElementById('search').value); };
+document.getElementById('onlineBtn').onclick = () => { currentFilter = 'online'; renderList('online', document.getElementById('search').value); };
+document.getElementById('offlineBtn').onclick = () => { currentFilter = 'offline'; renderList('offline', document.getElementById('search').value); };
+
+document.getElementById('search').addEventListener('input', (e) => {
+  renderList(currentFilter, e.target.value);
+});
+</script>
+</body>
+</html>

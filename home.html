@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Chatverse — Home</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="navbar card">
+      <div class="brand">
+        <div class="logo">CV</div>
+        <div>
+          <div style="font-weight:700">Chatverse</div>
+          <div class="small">Dark messenger • Realtime</div>
+        </div>
+      </div>
+
+      <div class="navlinks">
+        <a href="home.html" class="active">Home</a>
+        <a href="chat.html">Chat</a>
+        <a href="users.html">Users</a>
+        <a href="profile.html">Profile</a>
+        <a id="logoutBtn" style="cursor:pointer" class="small">Logout</a>
+      </div>
+    </div>
+
+    <div style="margin-top:18px" class="card">
+      <h2>Welcome to Chatverse</h2>
+      <p class="small">A simple realtime chat built with Firebase. Use the Chat tab to start 1:1 conversations. Users shows who's online.</p>
+      <div style="margin-top:12px" class="small">Tip: open another browser or incognito window and sign in as a different user to test realtime presence & messaging.</div>
+    </div>
+  </div>
+
+<script type="module">
+import { auth, onAuthStateChanged, signOutUser, setPresence } from './firebase.js';
+
+onAuthStateChanged(async (user) => {
+  if (!user) return window.location.href = 'login.html';
+  // set presence online in Realtime DB
+  setPresence(user.uid);
+});
+
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  await signOutUser();
+  window.location.href = 'login.html';
+});
+</script>
+</body>
+</html>

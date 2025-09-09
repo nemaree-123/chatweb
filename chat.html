@@ -1,0 +1,168 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Chatverse — Chat</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="navbar card">
+      <div class="brand"><div class="logo">CV</div><div><div style="font-weight:700">Chatverse</div><div class="small">Chat</div></div></div>
+      <div class="navlinks">
+        <a href="home.html">Home</a>
+        <a href="chat.html" class="active">Chat</a>
+        <a href="users.html">Users</a>
+        <a href="profile.html">Profile</a>
+        <a id="logoutBtn" style="cursor:pointer" class="small">Logout</a>
+      </div>
+    </div>
+
+    <div style="margin-top:18px" class="card chat-wrap">
+      <div class="chat-users">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div class="small">Users</div>
+          <div><input id="searchUser" class="input" placeholder="Search" style="width:160px"/></div>
+        </div>
+        <div id="usersList" style="display:flex;flex-direction:column;gap:6px"></div>
+      </div>
+
+      <div class="chat-area">
+        <div id="chatHeader" class="small">Select a user to start chatting</div>
+        <div id="messages" class="messages"></div>
+        <form id="msgForm" style="display:flex;gap:8px;margin-top:10px">
+          <input id="msgInput" class="input" placeholder="Type a message..." style="flex:1" autocomplete="off" />
+          <button class="btn" type="submit">Send</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+<script type="module">
+import { auth, db, onAuthStateChanged, setPresence, collection, query, where, onSnapshot, doc, getDoc, addDoc, serverTimestamp, orderBy } from './firebase.js';
+
+let me = null;
+let activeChatId = null;
+let activePeer = null;
+const usersListEl = document.getElementById('usersList');
+const messagesEl = document.getElementById('messages');
+const chatHeader = document.getElementById('chatHeader');
+
+onAuthStateChanged(async (user) => {
+  if (!user) return window.location.href = 'login.html';
+  me = user;
+  setPresence(me.uid);
+  loadUsers();
+});
+
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  await (await import('./firebase.js')).signOutUser();
+  window.location.href = 'login.html';
+});
+
+// Load users from 'users' collection
+async function loadUsers() {
+  usersListEl.innerHTML = '<div class="small">Loading users...</div>';
+  const q = query(collection(db, "users"));
+  onSnapshot(q, snapshot => {
+    usersListEl.innerHTML = '';
+    snapshot.forEach(docSnap => {
+      const u = docSnap.data();
+      // Exclude yourself from the "start chat" list
+      if (u.uid === (me && me.uid)) return;
+      const item = document.createElement('div');
+      item.className = 'user-item';
+      item.innerHTML = `<div style="display:flex;gap:8px;align-items:center;width:100%;justify-content:space-between">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:44px;height:44px;border-radius:8px;background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;font-weight:600">${(u.firstName||'?')[0]}${(u.lastName||'?')[0]}</div>
+          <div>
+            <div style="font-weight:600">${u.fullName || u.username}</div>
+            <div class="small">@${u.username}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <div id="status-${u.uid}" class="badge offline" title="status"></div>
+          <button class="btn ghost" data-uid="${u.uid}" data-username="${u.username}" data-fullname="${u.fullName}">Chat</button>
+        </div>
+      </div>`;
+      usersListEl.appendChild(item);
+      // presence listener using Realtime DB
+      import('./firebase.js').then(m => {
+        m.onPresenceChange(u.uid, status => {
+          const el = document.getElementById(`status-${u.uid}`);
+          if (!el) return;
+          if (status && status.state === 'online') {
+            el.className = 'badge online';
+            el.title = 'online';
+          } else {
+            el.className = 'badge offline';
+            el.title = 'offline';
+          }
+        });
+      });
+    });
+    // attach chat button events
+    usersListEl.querySelectorAll('button[data-uid]').forEach(btn => {
+      btn.onclick = () => {
+        const peerUid = btn.getAttribute('data-uid');
+        const peerUsername = btn.getAttribute('data-username');
+        const peerFullname = btn.getAttribute('data-fullname');
+        openChatWith({ uid: peerUid, username: peerUsername, fullName: peerFullname });
+      };
+    });
+  });
+}
+
+function chatIdFor(u1, u2) {
+  // deterministic: smaller_uid + '_' + larger_uid
+  return (u1 < u2) ? `${u1}_${u2}` : `${u2}_${u1}`;
+}
+
+async function openChatWith(peer) {
+  activePeer = peer;
+  activeChatId = chatIdFor(me.uid, peer.uid);
+  chatHeader.textContent = `Chat with ${peer.fullName || peer.username}`;
+  messagesEl.innerHTML = '';
+  // listen to messages in this chat
+  const messagesRef = collection(db, "chats", activeChatId, "messages");
+  const q = orderBy(collection(db, "chats").doc ? messagesRef : messagesRef, "createdAt"); // small guard
+  // remove previous listener by creating new onSnapshot
+  // simplified: set up onSnapshot
+  onSnapshot(messagesRef, (snap) => {
+    messagesEl.innerHTML = '';
+    const msgs = [];
+    snap.forEach(doc => msgs.push({ id: doc.id, ...doc.data() }));
+    msgs.sort((a,b)=> (a.createdAt?.toMillis? a.createdAt.toMillis() : (a.createdAt||0)) - (b.createdAt?.toMillis? b.createdAt.toMillis() : (b.createdAt||0)));
+    for (const m of msgs) {
+      appendMessage(m);
+    }
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  });
+}
+
+function appendMessage(m) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + ((m.senderId === me.uid) ? 'me' : 'them');
+  const time = m.createdAt ? new Date(m.createdAt.toMillis ? m.createdAt.toMillis() : m.createdAt).toLocaleString() : '';
+  div.innerHTML = `<div style="font-weight:600">${m.senderName || m.senderUsername}</div><div style="margin-top:6px">${m.text}</div><div class="msg-meta">${time}</div>`;
+  messagesEl.appendChild(div);
+}
+
+// sending messages
+document.getElementById('msgForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = document.getElementById('msgInput').value.trim();
+  if (!text || !activeChatId) return;
+  const messagesRef = collection(db, "chats", activeChatId, "messages");
+  await addDoc(messagesRef, {
+    text,
+    senderId: me.uid,
+    senderName: me.displayName || '',
+    senderUsername: me.email ? me.email.split('@')[0] : '',
+    createdAt: serverTimestamp()
+  });
+  document.getElementById('msgInput').value = '';
+});
+</script>
+</body>
+</html>
